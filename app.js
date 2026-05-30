@@ -1,0 +1,612 @@
+// app.js - Motor de Reconciliação e UI Controller (Offline-First)
+
+// 1. Configuração do IndexedDB Local
+const DB_NAME = 'GoianitaComodatoDB';
+const DB_VERSION = 1;
+const STORE_NAME = 'comodato_master';
+
+let db;
+let comodatoActiveStock = []; // Armazenamento temporário em memória para reconciliação ativa
+let matchedResults = [];
+let divergentResults = [];
+
+// Inicialização da IndexedDB
+function initDB() {
+    return new Promise((resolve, reject) => {
+        const request = indexedDB.open(DB_NAME, DB_VERSION);
+        
+        request.onupgradeneeded = (e) => {
+            const database = e.target.result;
+            if (!database.objectStoreNames.contains(STORE_NAME)) {
+                database.createObjectStore(STORE_NAME, { keyPath: 'sku' });
+            }
+        };
+        
+        request.onsuccess = (e) => {
+            db = e.target.result;
+            loadStoredMaster().then(resolve);
+        };
+        
+        request.onerror = (e) => {
+            console.error('Erro ao abrir IndexedDB:', e.target.error);
+            reject(e.target.error);
+        };
+    });
+}
+
+// Carregar estoque salvo localmente
+function loadStoredMaster() {
+    return new Promise((resolve) => {
+        const transaction = db.transaction(STORE_NAME, 'readonly');
+        const store = transaction.objectStore(STORE_NAME);
+        const request = store.getAll();
+        
+        request.onsuccess = () => {
+            const data = request.result;
+            if (data && data.length > 0) {
+                comodatoActiveStock = data;
+                updateDBStatusUI(true, data);
+                enableSalesDropzone(true);
+            } else {
+                updateDBStatusUI(false);
+                enableSalesDropzone(false);
+            }
+            resolve();
+        };
+    });
+}
+
+// Salvar a Planilha Mestra (Aba T4) no IndexedDB
+function saveMasterToDB(products) {
+    return new Promise((resolve, reject) => {
+        const transaction = db.transaction(STORE_NAME, 'readwrite');
+        const store = transaction.objectStore(STORE_NAME);
+        
+        // Limpar dados anteriores
+        store.clear();
+        
+        products.forEach(p => {
+            store.put(p);
+        });
+        
+        transaction.oncomplete = () => {
+            comodatoActiveStock = products;
+            updateDBStatusUI(true, products);
+            enableSalesDropzone(true);
+            resolve();
+        };
+        
+        transaction.onerror = (e) => {
+            console.error('Erro ao salvar no IndexedDB:', e.target.error);
+            reject(e.target.error);
+        };
+    });
+}
+
+// Deletar base local
+function clearDB() {
+    return new Promise((resolve, reject) => {
+        const transaction = db.transaction(STORE_NAME, 'readwrite');
+        const store = transaction.objectStore(STORE_NAME);
+        store.clear();
+        
+        transaction.oncomplete = () => {
+            comodatoActiveStock = [];
+            updateDBStatusUI(false);
+            enableSalesDropzone(false);
+            hideResults();
+            resolve();
+        };
+        
+        transaction.onerror = (e) => {
+            reject(e.target.error);
+        };
+    });
+}
+
+// 2. Controladores da Interface (UI)
+const masterDropzone = document.getElementById('master-dropzone');
+const masterFileInput = document.getElementById('master-file-input');
+const salesDropzone = document.getElementById('sales-dropzone');
+const salesFileInput = document.getElementById('sales-file-input');
+const dbStatusCard = document.getElementById('db-status-card');
+const dbStatusIcon = document.getElementById('db-status-icon');
+const dbStatusTitle = document.getElementById('db-status-title');
+const dbStatusText = document.getElementById('db-status-text');
+const dbDetails = document.getElementById('db-details');
+const btnResetDb = document.getElementById('btn-reset-db');
+
+const valSkus = document.getElementById('val-skus');
+const valQty = document.getElementById('val-qty');
+const valValue = document.getElementById('val-value');
+
+const pricingPDV = document.getElementById('pricing-pdv');
+const pricingCusto = document.getElementById('pricing-custo');
+const pricingFator = document.getElementById('pricing-fator');
+const sliderContainer = document.getElementById('slider-container');
+const slider = document.getElementById('price-factor-slider');
+const sliderVal = document.getElementById('slider-val');
+
+const resultsSection = document.getElementById('results-section');
+const statQtyMatched = document.getElementById('stat-qty-matched');
+const statValueMatched = document.getElementById('stat-value-matched');
+const statQtyDivergent = document.getElementById('stat-qty-divergent');
+const divergencesPanel = document.getElementById('divergences-panel');
+const divergencesTableBody = document.getElementById('divergences-table-body');
+const btnExportOlist = document.getElementById('btn-export-olist');
+
+// Atualizar status visual do IndexedDB
+function updateDBStatusUI(active, data = []) {
+    if (active) {
+        dbStatusCard.classList.add('active');
+        dbStatusIcon.textContent = '🟢';
+        dbStatusTitle.textContent = 'Base Contábil Ativa';
+        
+        // Calcular totais
+        const totalSKUs = data.length;
+        const totalQty = data.reduce((acc, curr) => acc + (curr.qty || 0), 0);
+        const totalValue = data.reduce((acc, curr) => acc + ((curr.qty || 0) * (curr.cost || 0)), 0);
+        
+        dbStatusText.textContent = 'Planilha T4 carregada localmente';
+        valSkus.textContent = totalSKUs.toLocaleString('pt-BR');
+        valQty.textContent = totalQty.toLocaleString('pt-BR');
+        valValue.textContent = formatCurrency(totalValue);
+        
+        dbDetails.style.display = 'flex';
+        btnResetDb.style.display = 'block';
+    } else {
+        dbStatusCard.classList.remove('active');
+        dbStatusIcon.textContent = '⚠️';
+        dbStatusTitle.textContent = 'Aguardando Base Contábil';
+        dbStatusText.textContent = 'IndexedDB local vazia';
+        
+        dbDetails.style.display = 'none';
+        btnResetDb.style.display = 'none';
+    }
+}
+
+// Habilitar/Desabilitar drag & drop de vendas
+function enableSalesDropzone(enable) {
+    const salesDropText = document.getElementById('sales-drop-text');
+    if (enable) {
+        salesDropzone.classList.remove('disabled');
+        salesFileInput.disabled = false;
+        salesDropText.innerHTML = 'Arraste o arquivo de vendas <strong>Filial 85 Castor</strong> ou clique para navegar';
+    } else {
+        salesDropzone.classList.add('disabled');
+        salesFileInput.disabled = true;
+        salesDropText.innerHTML = 'Carregue primeiro a planilha mestra (T4)';
+    }
+}
+
+// Formatação de Dinheiro (BRL)
+function formatCurrency(val) {
+    return val.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+}
+
+// Esconder Painel de Resultados
+function hideResults() {
+    resultsSection.style.display = 'none';
+    divergencesPanel.style.display = 'none';
+}
+
+// Ouvir mudanças nos Radio Buttons de Precificação
+document.querySelectorAll('input[name="pricing-mode"]').forEach(radio => {
+    radio.addEventListener('change', () => {
+        if (pricingFator.checked) {
+            sliderContainer.style.display = 'flex';
+        } else {
+            sliderContainer.style.display = 'none';
+        }
+    });
+});
+
+// Atualizar valor exibido do slider
+slider.addEventListener('input', (e) => {
+    const val = parseInt(e.target.value);
+    sliderVal.textContent = (val >= 0 ? '+' : '') + val + '%';
+});
+
+// Resetar base local ao clicar
+btnResetDb.addEventListener('click', () => {
+    if (confirm('Tem certeza de que deseja apagar a base de comodato salva neste navegador?')) {
+        clearDB();
+    }
+});
+
+// 3. Gerenciamento de Arquivos e Parsing (Fase 1 e 2 do Backlog)
+// Configurar eventos do dropzone da Planilha Mestra (Virtual T4)
+masterDropzone.addEventListener('click', () => masterFileInput.click());
+masterDropzone.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    masterDropzone.classList.add('dragover');
+});
+masterDropzone.addEventListener('dragleave', () => masterDropzone.classList.remove('dragover'));
+masterDropzone.addEventListener('drop', (e) => {
+    e.preventDefault();
+    masterDropzone.classList.remove('dragover');
+    if (e.dataTransfer.files.length > 0) {
+        handleMasterFile(e.dataTransfer.files[0]);
+    }
+});
+masterFileInput.addEventListener('change', (e) => {
+    if (e.target.files.length > 0) {
+        handleMasterFile(e.target.files[0]);
+    }
+});
+
+// Processar a Planilha Mestra (T4)
+function handleMasterFile(file) {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+        try {
+            const data = new Uint8Array(e.target.result);
+            const workbook = XLSX.read(data, { type: 'array' });
+            
+            // Procurar especificamente a aba FILIAL T4
+            const targetSheetName = workbook.SheetNames.find(name => name.toUpperCase().includes('T4'));
+            
+            if (!targetSheetName) {
+                alert('Erro: Não foi encontrada a aba contendo "T4" (Virtual) na planilha carregada! Verifique o arquivo.');
+                return;
+            }
+            
+            const worksheet = workbook.Sheets[targetSheetName];
+            const jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 'A' });
+            
+            if (jsonData.length < 2) {
+                alert('Erro: Planilha vazia ou com formato incorreto.');
+                return;
+            }
+            
+            // Parsear os produtos da planilha mestra
+            // Formato esperado de cabeçalho: Row 2 tem SKU, NOME DO PRODUTO, PREÇO CUSTO, QUANTIDADE
+            // Nós identificamos as colunas analisando a Row 2 (índice 1)
+            let colSku = 'A', colName = 'B', colCost = 'C', colQty = 'D';
+            
+            const headerRow = jsonData.find(row => 
+                (row.A && row.A.toString().toUpperCase().includes('SKU')) || 
+                (row.B && row.B.toString().toUpperCase().includes('PRODUTO'))
+            );
+            
+            if (headerRow) {
+                // Mapeia letras se o formato for fora do padrão
+                for (const [key, value] of Object.entries(headerRow)) {
+                    const text = value.toString().toUpperCase();
+                    if (text.includes('SKU')) colSku = key;
+                    else if (text.includes('PRODUTO') || text.includes('NOME')) colName = key;
+                    else if (text.includes('CUSTO') || text.includes('PRECO')) colCost = key;
+                    else if (text.includes('QUANTIDADE') || text.includes('QTD')) colQty = key;
+                }
+            }
+            
+            const products = [];
+            jsonData.forEach(row => {
+                const skuStr = row[colSku] ? row[colSku].toString().trim() : '';
+                // Ignorar cabeçalhos e linhas vazias
+                if (!skuStr || skuStr.toUpperCase().includes('SKU') || skuStr.toUpperCase().includes('ESTOQUE')) {
+                    return;
+                }
+                
+                const costVal = parseFloat(row[colCost]) || 0;
+                const qtyVal = parseInt(row[colQty]) || 0;
+                
+                products.push({
+                    sku: skuStr,
+                    name: row[colName] ? row[colName].toString().trim() : 'PRODUTO SEM NOME',
+                    cost: costVal,
+                    qty: qtyVal
+                });
+            });
+            
+            if (products.length === 0) {
+                alert('Nenhum SKU válido de comodato foi localizado na planilha!');
+                return;
+            }
+            
+            saveMasterToDB(products).then(() => {
+                alert(`Sucesso! Carregada base de comodato da FILIAL T4 contendo ${products.length} SKUs.`);
+            });
+            
+        } catch (err) {
+            console.error(err);
+            alert('Falha ao parsear arquivo de planilha mestra: ' + err.message);
+        }
+    };
+    reader.readAsArrayBuffer(file);
+}
+
+// Configurar eventos do dropzone do Relatório de Vendas (Castor 85)
+salesDropzone.addEventListener('click', () => {
+    if (!salesDropzone.classList.contains('disabled')) {
+        salesFileInput.click();
+    }
+});
+salesDropzone.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    if (!salesDropzone.classList.contains('disabled')) {
+        salesDropzone.classList.add('dragover');
+    }
+});
+salesDropzone.addEventListener('dragleave', () => salesDropzone.classList.remove('dragover'));
+salesDropzone.addEventListener('drop', (e) => {
+    e.preventDefault();
+    salesDropzone.classList.remove('dragover');
+    if (!salesDropzone.classList.contains('disabled') && e.dataTransfer.files.length > 0) {
+        handleSalesFile(e.dataTransfer.files[0]);
+    }
+});
+salesFileInput.addEventListener('change', (e) => {
+    if (e.target.files.length > 0) {
+        handleSalesFile(e.target.files[0]);
+    }
+});
+
+// 4. Engine de Reconciliação Chave (Fase 2 do Backlog)
+function handleSalesFile(file) {
+    const reader = new FileReader();
+    
+    // Suporte para CSV e XLSX de forma transparente
+    const isExcel = file.name.endsWith('.xlsx') || file.name.endsWith('.xls');
+    
+    reader.onload = (e) => {
+        try {
+            let salesRows = [];
+            if (isExcel) {
+                const data = new Uint8Array(e.target.result);
+                const workbook = XLSX.read(data, { type: 'array' });
+                const worksheet = workbook.Sheets[workbook.SheetNames[0]];
+                salesRows = XLSX.utils.sheet_to_json(worksheet, { header: 'A' });
+            } else {
+                const text = e.target.result;
+                salesRows = parseCSV(text);
+            }
+            
+            reconcileSales(salesRows);
+        } catch (err) {
+            console.error(err);
+            alert('Falha ao processar arquivo de vendas: ' + err.message);
+        }
+    };
+    
+    if (isExcel) {
+        reader.readAsArrayBuffer(file);
+    } else {
+        reader.readAsText(file, 'utf-8'); // Lendo em UTF-8
+    }
+}
+
+// Parser simples para CSV que lida com aspas
+function parseCSV(text) {
+    const lines = text.split(/\r?\n/);
+    const rows = [];
+    lines.forEach((line, rIdx) => {
+        if (!line.trim()) return;
+        const result = [];
+        let current = '';
+        let inQuotes = false;
+        
+        for (let i = 0; i < line.length; i++) {
+            const char = line[i];
+            if (char === '"') {
+                inQuotes = !inQuotes;
+            } else if ((char === ',' || char === ';') && !inQuotes) { // Suporta separador por vírgula ou ponto-e-vírgula
+                result.push(current.trim());
+                current = '';
+            } else {
+                current += char;
+            }
+        }
+        result.push(current.trim());
+        
+        // Mapeia para um objeto com colunas A, B, C... para compatibilidade com sheet_to_json
+        const mappedRow = {};
+        result.forEach((val, idx) => {
+            const colLetter = String.fromCharCode(65 + idx); // 0 -> A, 1 -> B...
+            mappedRow[colLetter] = val;
+        });
+        rows.push(mappedRow);
+    });
+    return rows;
+}
+
+// Algoritmo Principal de Matching e Reconciliação
+function reconcileSales(salesRows) {
+    if (comodatoActiveStock.length === 0) {
+        alert('A base de comodato não está ativa!');
+        return;
+    }
+    
+    // Resetar resultados anteriores
+    matchedResults = [];
+    divergentResults = [];
+    
+    // Clonar o estoque ativo para manipulação em memória durante a conciliação
+    // Isso evita degradar o IndexedDB com atualizações parciais
+    const stockMap = {};
+    comodatoActiveStock.forEach(p => {
+        stockMap[p.sku] = { ...p };
+    });
+    
+    // Detectar colunas do relatório de vendas do Helper da Filial 85
+    let colSku = 'A', colQty = 'D', colPrice = 'C'; 
+    
+    const headerRow = salesRows.find(row => 
+        Object.values(row).some(v => v.toString().toUpperCase().includes('SKU') || v.toString().toUpperCase().includes('CÓDIGO'))
+    );
+    
+    if (headerRow) {
+        for (const [key, value] of Object.entries(headerRow)) {
+            const text = value.toString().toUpperCase();
+            if (text.includes('SKU') || text.includes('CODIGO') || text.includes('CÓDIGO')) colSku = key;
+            else if (text.includes('QTD') || text.includes('QUANTIDADE')) colQty = key;
+            else if (text.includes('PRECO') || text.includes('VALOR') || text.includes('UNIT') || text.includes('VENDA')) colPrice = key;
+        }
+    }
+    
+    let totalMatchedQty = 0;
+    let totalMatchedValue = 0;
+    
+    salesRows.forEach(row => {
+        const skuStr = row[colSku] ? row[colSku].toString().trim() : '';
+        if (!skuStr || skuStr.toUpperCase().includes('SKU') || skuStr.toUpperCase().includes('CÓDIGO') || skuStr.toUpperCase().includes('ESTOQUE')) {
+            return; // ignora cabeçalho
+        }
+        
+        const qtySold = parseInt(row[colQty]) || 0;
+        const pdvPrice = parseFloat(row[colPrice]) || 0;
+        
+        if (qtySold <= 0) return;
+        
+        const match = stockMap[skuStr];
+        
+        if (!match) {
+            // Divergência: SKU vendido na Filial 85 mas que não pertence ao comodato de T4
+            divergentResults.push({
+                sku: skuStr,
+                name: row['B'] || 'PRODUTO NÃO CADASTRADO NO COMODATO',
+                qtySold: qtySold,
+                comodatoQty: 0,
+                reason: 'SKU não pertence ao contrato de comodato (T4)'
+            });
+            return;
+        }
+        
+        // Calcular o faturamento com base no Motor de Precificação Dinâmica
+        let finalPrice = match.cost; // Default: Custo Fixo
+        
+        if (pricingPDV.checked) {
+            finalPrice = pdvPrice || match.cost; // Preserva o preço pago na venda
+        } else if (pricingFator.checked) {
+            const factor = parseInt(slider.value) / 100;
+            finalPrice = match.cost * (1 + factor);
+        }
+        
+        // Reconciliar quantidade
+        if (match.qty >= qtySold) {
+            // Sucesso absoluto de estoque
+            match.qty -= qtySold;
+            
+            matchedResults.push({
+                sku: skuStr,
+                name: match.name,
+                qty: qtySold,
+                price: finalPrice,
+                originalCost: match.cost
+            });
+            
+            totalMatchedQty += qtySold;
+            totalMatchedValue += (qtySold * finalPrice);
+        } else {
+            // Estoque insuficiente em comodato: Reconciliação Parcial
+            const partialQty = match.qty;
+            const remainingQty = qtySold - partialQty;
+            
+            if (partialQty > 0) {
+                matchedResults.push({
+                    sku: skuStr,
+                    name: match.name,
+                    qty: partialQty,
+                    price: finalPrice,
+                    originalCost: match.cost
+                });
+                
+                totalMatchedQty += partialQty;
+                totalMatchedValue += (partialQty * finalPrice);
+                match.qty = 0; // Zerado
+            }
+            
+            // A quantidade excedente entra como divergência de estoque
+            divergentResults.push({
+                sku: skuStr,
+                name: match.name,
+                qtySold: qtySold,
+                comodatoQty: partialQty,
+                reason: `Estoque esgotado. Faltam ${remainingQty} unidades no comodato.`
+            });
+        }
+    });
+    
+    // Atualizar UI com os resultados calculados
+    displayResults(totalMatchedQty, totalMatchedValue, divergentResults);
+}
+
+// 5. Exibição e Exportação de Resultados (Fase 3 do Backlog)
+function displayResults(matchedQty, matchedValue, divergences) {
+    resultsSection.style.display = 'block';
+    statQtyMatched.textContent = matchedQty.toLocaleString('pt-BR');
+    statValueMatched.textContent = formatCurrency(matchedValue);
+    
+    const divCount = divergences.length;
+    statQtyDivergent.textContent = divCount;
+    
+    if (divCount > 0) {
+        divergencesTableBody.innerHTML = '';
+        divergences.forEach(d => {
+            const row = document.createElement('tr');
+            row.innerHTML = `
+                <td><strong>${d.sku}</strong></td>
+                <td>${d.name}</td>
+                <td>${d.qtySold}</td>
+                <td>${d.comodatoQty}</td>
+                <td class="error-text">⚠️ ${d.reason}</td>
+            `;
+            divergencesTableBody.appendChild(row);
+        });
+        divergencesPanel.style.display = 'block';
+    } else {
+        divergencesPanel.style.display = 'none';
+    }
+    
+    // Suave Scroll para resultados
+    resultsSection.scrollIntoView({ behavior: 'smooth' });
+}
+
+// Exportar CSV Olist-Ready
+btnExportOlist.addEventListener('click', () => {
+    if (matchedResults.length === 0) {
+        alert('Não há itens reconciliados para exportação.');
+        return;
+    }
+    
+    // Cabeçalhos padrão baseados no Padrao-produtos-olist.xlsx
+    // Código (SKU) | Descrição | Unidade | Quantidade | Preço | Preço de custo
+    const headers = ['Código (SKU)', 'Descrição', 'Unidade', 'Quantidade', 'Preço', 'Preço de custo'];
+    
+    let csvContent = '\uFEFF'; // Adiciona BOM para abrir corretamente no Excel brasileiro
+    csvContent += headers.join(';') + '\r\n'; // Usando ponto-e-vírgula como padrão nacional
+    
+    matchedResults.forEach(r => {
+        const row = [
+            r.sku,
+            `"${r.name.replace(/"/g, '""')}"`, // Protege descrições com aspas
+            'UN',
+            r.qty,
+            r.price.toFixed(2).replace('.', ','), // Formato brasileiro de vírgula decimal
+            r.originalCost.toFixed(2).replace('.', ',')
+        ];
+        csvContent += row.join(';') + '\r\n';
+    });
+    
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    
+    const today = new Date().toISOString().slice(0, 10);
+    link.setAttribute('href', url);
+    link.setAttribute('download', `faturamento_comodato_virtual_para_castor_${today}.csv`);
+    link.style.visibility = 'hidden';
+    
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    
+    alert('Sucesso! Planilha Olist importável baixada. Basta importá-la para emitir suas notas fiscais de venda.');
+});
+
+// Inicialização imediata ao carregar a página
+window.addEventListener('DOMContentLoaded', () => {
+    initDB().then(() => {
+        console.log('IndexedDB e aplicação inicializadas.');
+    });
+});

@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Goianita - Reconciliador Fiscal e Estoque</title>
+    
+    <!-- Google Fonts: Outfit & Inter -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    
+    <!-- Tailwind CSS (Se o usuário desejar usar no futuro, mas mantemos o style.css puro como verdade para o design Vanilla) -->
+    <!-- SheetJS (xlsx) for parsing Excel files client-side -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js" integrity="sha512-r22gChDnGvBylk90+2e/yCr3MTsSlZsHzID3TNc3q28WghHsjt/1/IBm5nHLibrt5bdb2OIZF9KyqYhzVyYuWA==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+    
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="background-decor">
+        <div class="glow-orb orb-1"></div>
+        <div class="glow-orb orb-2"></div>
+    </div>
+
+    <main class="app-container">
+        <!-- Header -->
+        <header class="app-header">
+            <div class="logo-area">
+                <span class="logo-icon">⚡</span>
+                <div class="logo-text">
+                    <h1>Goianita</h1>
+                    <span class="sub-logo">Reconciliador Fiscal de Comodato</span>
+                </div>
+            </div>
+            <div class="status-badge-container">
+                <div class="status-badge offline-mode">
+                    <span class="badge-dot"></span>
+                    <span class="badge-text">Modo Local & Seguro</span>
+                </div>
+            </div>
+        </header>
+
+        <!-- Main Workspace -->
+        <div class="workspace-grid">
+            
+            <!-- Left Panel: Configuration & Database -->
+            <section class="panel left-panel">
+                <div class="panel-header">
+                    <h2>1. Planilha Mestra (Virtual - T4)</h2>
+                    <p class="panel-desc">Inicialize o estoque original da Virtual para reconciliação</p>
+                </div>
+                
+                <div class="db-card" id="db-status-card">
+                    <div class="db-status-header">
+                        <span class="status-icon" id="db-status-icon">⚠️</span>
+                        <div class="db-status-info">
+                            <h3 id="db-status-title">Aguardando Base contábil</h3>
+                            <p id="db-status-text">IndexedDB local vazia</p>
+                        </div>
+                    </div>
+                    
+                    <div class="db-details" id="db-details" style="display: none;">
+                        <div class="detail-row">
+                            <span class="label">Total SKUs:</span>
+                            <span class="val" id="val-skus">0</span>
+                        </div>
+                        <div class="detail-row">
+                            <span class="label">Total Quantidade:</span>
+                            <span class="val" id="val-qty">0</span>
+                        </div>
+                        <div class="detail-row">
+                            <span class="label">Valoração Contábil:</span>
+                            <span class="val accent" id="val-value">R$ 0,00</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Master Sheet Upload Dropzone -->
+                <div class="dropzone master-dropzone" id="master-dropzone">
+                    <input type="file" id="master-file-input" accept=".xlsx, .xls, .csv" style="display: none;">
+                    <div class="dropzone-content">
+                        <span class="drop-icon">📂</span>
+                        <p class="drop-text">Arraste a planilha contábil <strong>T4 Virtual</strong> ou clique para navegar</p>
+                        <span class="file-limits">Suporta XLSX, XLS, CSV</span>
+                    </div>
+                </div>
+                
+                <!-- Reset DB Button -->
+                <button class="btn btn-secondary" id="btn-reset-db" style="display: none;">
+                    <span>🗑️ Limpar Base Local</span>
+                </button>
+            </section>
+
+            <!-- Right Panel: Processing Engine & Pricing -->
+            <section class="panel right-panel">
+                <div class="panel-header">
+                    <h2>2. Motor de Precificação Dinâmica</h2>
+                    <p class="panel-desc">Escolha a regra de precificação para a exportação de notas</p>
+                </div>
+
+                <!-- Pricing Selector Grid -->
+                <div class="pricing-grid">
+                    <label class="pricing-option" for="pricing-custo">
+                        <input type="radio" name="pricing-mode" id="pricing-custo" value="custo" checked>
+                        <div class="option-content">
+                            <span class="opt-icon">🏷️</span>
+                            <div class="opt-text">
+                                <h3>Custo Contábil Fixo</h3>
+                                <p>Fatura pelo custo da planilha T4 (Virtual)</p>
+                            </div>
+                        </div>
+                    </label>
+
+                    <label class="pricing-option" for="pricing-pdv">
+                        <input type="radio" name="pricing-mode" id="pricing-pdv" value="pdv">
+                        <div class="option-content">
+                            <span class="opt-icon">🛒</span>
+                            <div class="opt-text">
+                                <h3>Preço Real PDV (Castor)</h3>
+                                <p>Preserva descontos, atacados e promoções de venda</p>
+                            </div>
+                        </div>
+                    </label>
+
+                    <label class="pricing-option" for="pricing-fator">
+                        <input type="radio" name="pricing-mode" id="pricing-fator" value="fator">
+                        <div class="option-content">
+                            <span class="opt-icon">⚖️</span>
+                            <div class="opt-text">
+                                <h3>Fator de Ajuste Dinâmico</h3>
+                                <p>Markup ou desconto aplicado em lote</p>
+                            </div>
+                        </div>
+                    </label>
+                </div>
+
+                <!-- Slider Container (Habilitado apenas no modo fator) -->
+                <div class="slider-container" id="slider-container" style="display: none;">
+                    <div class="slider-header">
+                        <span>Percentual de Ajuste Contábil:</span>
+                        <span id="slider-val" class="accent-text">0%</span>
+                    </div>
+                    <input type="range" id="price-factor-slider" min="-50" max="50" value="0" step="1">
+                    <div class="slider-labels">
+                        <span>-50% (Desconto)</span>
+                        <span>0% (Custo)</span>
+                        <span>+50% (Markup)</span>
+                    </div>
+                </div>
+
+                <!-- Reconcile Dropzone (Vendas Filial 85 - Castor) -->
+                <div class="panel-section-divider"></div>
+                
+                <div class="panel-header">
+                    <h2>3. Reconciliação Diária (Castor - Filial 85)</h2>
+                    <p class="panel-desc">Arraste o arquivo de vendas diárias da Castor para reconciliar</p>
+                </div>
+
+                <div class="dropzone sales-dropzone disabled" id="sales-dropzone">
+                    <input type="file" id="sales-file-input" accept=".csv, .xlsx, .xls" style="display: none;" disabled>
+                    <div class="dropzone-content">
+                        <span class="drop-icon">⚡</span>
+                        <p class="drop-text" id="sales-drop-text">Carregue primeiro a planilha mestra (T4)</p>
+                        <span class="file-limits">Suporta CSV e XLSX exportado pelo Helper</span>
+                    </div>
+                </div>
+            </section>
+        </div>
+
+        <!-- Processing Stats & Results -->
+        <section class="results-section" id="results-section" style="display: none;">
+            <div class="results-header">
+                <h2>📊 Resultados da Reconciliação</h2>
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <span class="stat-label">Itens Reconciliados</span>
+                        <span class="stat-value" id="stat-qty-matched">0</span>
+                    </div>
+                    <div class="stat-card">
+                        <span class="stat-label">Total Faturado (Virtual $\rightarrow$ Castor)</span>
+                        <span class="stat-value accent" id="stat-value-matched">R$ 0,00</span>
+                    </div>
+                    <div class="stat-card divergent">
+                        <span class="stat-label">Divergências Detectadas</span>
+                        <span class="stat-value error" id="stat-qty-divergent">0</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Export Buttons -->
+            <div class="action-bar">
+                <button class="btn btn-primary" id="btn-export-olist">
+                    <span>📤 Exportar CSV para Olist</span>
+                </button>
+            </div>
+
+            <!-- Tabs/Divergences Panel -->
+            <div class="divergences-panel" id="divergences-panel" style="display: none;">
+                <h3>⚠️ Relatório de Divergências / Inconsistências</h3>
+                <div class="table-container">
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th>SKU</th>
+                                <th>Produto</th>
+                                <th>Qtd. Vendida</th>
+                                <th>Qtd. em Comodato</th>
+                                <th>Motivo da Divergência</th>
+                            </tr>
+                        </thead>
+                        <tbody id="divergences-table-body">
+                            <!-- Inserido dinamicamente via JS -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <!-- App scripts -->
+    <script src="app.js"></script>
+</body>
+</html>
