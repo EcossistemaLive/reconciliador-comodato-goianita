@@ -89,6 +89,33 @@
                 <button class="btn btn-secondary" id="btn-reset-db" style="display: none;">
                     <span>🗑️ Limpar Base Local</span>
                 </button>
+
+                <div class="panel-section-divider"></div>
+                
+                <div class="panel-header">
+                    <h2>4. Conexão Google Sheets (Histórico)</h2>
+                    <p class="panel-desc">Grave o log de conciliações em tempo real em sua planilha</p>
+                </div>
+                
+                <div class="sheets-form">
+                    <div class="form-group">
+                        <label for="sheets-url">URL do Web App do Google:</label>
+                        <input type="text" id="sheets-url" placeholder="Cole a URL do Apps Script aqui" value="https://script.google.com/macros/s/AKfycbyBiWdoJdG4yVNbL3ziJ0QmihKmqCeqbVY1L9LamIHerjxMlE5O8c-90iv5zKLQTmQ/exec">
+                    </div>
+                    
+                    <div class="sync-toggle-container">
+                        <label class="toggle-switch">
+                            <input type="checkbox" id="sheets-auto-sync" checked>
+                            <span class="toggle-slider"></span>
+                        </label>
+                        <span class="toggle-label">Registrar automaticamente ao exportar</span>
+                    </div>
+                    
+                    <button class="btn btn-secondary" id="btn-test-sheets" style="margin-top: 0.5rem;">
+                        <span>🔌 Testar Conexão Google Sheets</span>
+                    </button>
+                    <div id="sheets-test-status" style="font-size: 0.8rem; text-align: center; display: none;"></div>
+                </div>
             </section>
 
             <!-- Right Panel: Processing Engine & Pricing -->
@@ -188,8 +215,11 @@
             </div>
 
             <!-- Export Buttons -->
-            <div class="action-bar">
-                <button class="btn btn-primary" id="btn-export-olist">
+            <div class="action-bar" style="display: flex; gap: 1rem; justify-content: flex-end;">
+                <button class="btn btn-secondary" id="btn-sync-sheets" style="width: auto; min-width: 200px;">
+                    <span>💾 Registrar no Google Sheets</span>
+                </button>
+                <button class="btn btn-primary" id="btn-export-olist" style="width: auto; min-width: 250px;">
                     <span>📤 Exportar CSV para Olist</span>
                 </button>
             </div>

@@ -135,6 +135,13 @@ const divergencesPanel = document.getElementById('divergences-panel');
 const divergencesTableBody = document.getElementById('divergences-table-body');
 const btnExportOlist = document.getElementById('btn-export-olist');
 
+// Elementos Google Sheets
+const sheetsUrlInput = document.getElementById('sheets-url');
+const sheetsAutoSyncCheckbox = document.getElementById('sheets-auto-sync');
+const btnTestSheets = document.getElementById('btn-test-sheets');
+const sheetsTestStatus = document.getElementById('sheets-test-status');
+const btnSyncSheets = document.getElementById('btn-sync-sheets');
+
 // Atualizar status visual do IndexedDB
 function updateDBStatusUI(active, data = []) {
     if (active) {
@@ -562,6 +569,121 @@ function displayResults(matchedQty, matchedValue, divergences) {
     resultsSection.scrollIntoView({ behavior: 'smooth' });
 }
 
+// Carregar configurações do Google Sheets do localStorage
+function loadSheetsSettings() {
+    if (localStorage.getItem('sheets_url')) sheetsUrlInput.value = localStorage.getItem('sheets_url');
+    if (localStorage.getItem('sheets_auto_sync') !== null) {
+        sheetsAutoSyncCheckbox.checked = localStorage.getItem('sheets_auto_sync') === 'true';
+    }
+}
+
+// Salvar configurações do Google Sheets no localStorage
+function saveSheetsSettings() {
+    localStorage.setItem('sheets_url', sheetsUrlInput.value.trim());
+    localStorage.setItem('sheets_auto_sync', sheetsAutoSyncCheckbox.checked);
+}
+
+// Registrar no Google Sheets via Apps Script Web App
+function syncToGoogleSheets(testMode = false) {
+    saveSheetsSettings();
+    
+    const url = sheetsUrlInput.value.trim();
+    
+    if (!url) {
+        if (!testMode) {
+            alert('Google Sheets não está configurado. Por favor, preencha a URL do Web App.');
+        }
+        return Promise.reject('Configurações incompletas');
+    }
+    
+    let payload = {};
+    if (testMode) {
+        payload = {
+            datetime: new Date().toLocaleString('pt-BR'),
+            filename: "TESTE_CONEXAO",
+            pricingMode: "N/A",
+            totalQty: 0,
+            totalValue: 0,
+            totalDivergences: 0,
+            divergentSkus: ["Nenhum"]
+        };
+    } else {
+        if (matchedResults.length === 0) {
+            alert('Não há itens reconciliados para registrar.');
+            return Promise.reject('Sem resultados');
+        }
+        
+        const salesFileInput = document.getElementById('sales-file-input');
+        const filename = salesFileInput.files[0] ? salesFileInput.files[0].name : "relatorio_vendas.csv";
+        
+        let pricingModeText = "Custo Contábil Fixo";
+        if (pricingPDV.checked) {
+            pricingModeText = "Preço Real PDV";
+        } else if (pricingFator.checked) {
+            pricingModeText = `Fator de Ajuste (${slider.value}%)`;
+        }
+        
+        const totalQty = matchedResults.reduce((acc, curr) => acc + curr.qty, 0);
+        const totalValue = matchedResults.reduce((acc, curr) => acc + (curr.qty * curr.price), 0);
+        
+        payload = {
+            datetime: new Date().toLocaleString('pt-BR'),
+            filename: filename,
+            pricingMode: pricingModeText,
+            totalQty: totalQty,
+            totalValue: totalValue,
+            totalDivergences: divergentResults.length,
+            divergentSkus: divergentResults.map(d => d.sku)
+        };
+    }
+    
+    if (testMode) {
+        sheetsTestStatus.style.display = 'block';
+        sheetsTestStatus.style.color = 'var(--text-secondary)';
+        sheetsTestStatus.textContent = '⚡ Conectando ao Google Sheets...';
+    }
+    
+    // Fazer uma requisição POST usando a API Fetch para a URL do script do Google
+    return fetch(url, {
+        method: 'POST',
+        mode: 'no-cors', // Evita erros estritos de CORS de páginas locais
+        headers: {
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(payload)
+    })
+    .then(response => {
+        if (testMode) {
+            sheetsTestStatus.style.display = 'block';
+            sheetsTestStatus.style.color = 'var(--status-offline)';
+            sheetsTestStatus.textContent = '🔌 Requisição de teste enviada! Verifique se uma nova linha apareceu na planilha.';
+            setTimeout(() => { sheetsTestStatus.style.display = 'none'; }, 8000);
+        } else {
+            alert('Registro enviado com sucesso! Verifique a sua Planilha do Google.');
+        }
+    })
+    .catch(error => {
+        console.error('Erro no Google Sheets:', error);
+        if (testMode) {
+            sheetsTestStatus.style.display = 'block';
+            sheetsTestStatus.style.color = 'var(--status-error)';
+            sheetsTestStatus.textContent = '❌ Falha ao enviar: ' + error.message;
+        } else {
+            alert('Erro ao registrar dados no Google Sheets: ' + error.message);
+        }
+    });
+}
+
+// Ouvir clique de teste do Google Sheets
+btnTestSheets.addEventListener('click', () => {
+    syncToGoogleSheets(true);
+});
+
+// Ouvir clique manual de registro do Google Sheets
+btnSyncSheets.addEventListener('click', () => {
+    syncToGoogleSheets(false);
+});
+
 // Exportar CSV Olist-Ready
 btnExportOlist.addEventListener('click', () => {
     if (matchedResults.length === 0) {
@@ -601,6 +723,13 @@ btnExportOlist.addEventListener('click', () => {
     link.click();
     document.body.removeChild(link);
     
+    // Se o auto sync do Google Sheets estiver ativado, dispara a gravação no Sheets
+    if (sheetsAutoSyncCheckbox.checked) {
+        syncToGoogleSheets(false).catch(err => {
+            console.warn('Auto-sync Google Sheets falhou:', err);
+        });
+    }
+    
     alert('Sucesso! Planilha Olist importável baixada. Basta importá-la para emitir suas notas fiscais de venda.');
 });
 
@@ -608,5 +737,6 @@ btnExportOlist.addEventListener('click', () => {
 window.addEventListener('DOMContentLoaded', () => {
     initDB().then(() => {
         console.log('IndexedDB e aplicação inicializadas.');
+        loadSheetsSettings(); // Carrega credenciais salvas no localStorage
     });
 });
