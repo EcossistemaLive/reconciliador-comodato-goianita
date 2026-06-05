@@ -242,85 +242,131 @@ masterFileInput.addEventListener('change', (e) => {
     }
 });
 
-// Processar a Planilha Mestra (T4)
+// Processar a Planilha Mestra (T4) — suporte a CSV e XLSX
 function handleMasterFile(file) {
     const reader = new FileReader();
+    const isCSV = file.name.toLowerCase().endsWith('.csv');
+
     reader.onload = (e) => {
         try {
-            const data = new Uint8Array(e.target.result);
-            const workbook = XLSX.read(data, { type: 'array' });
-            
-            // Procurar especificamente a aba FILIAL T4
-            const targetSheetName = workbook.SheetNames.find(name => name.toUpperCase().includes('T4'));
-            
-            if (!targetSheetName) {
-                alert('Erro: Não foi encontrada a aba contendo "T4" (Virtual) na planilha carregada! Verifique o arquivo.');
+            let jsonData = [];
+
+            if (isCSV) {
+                // Parsear CSV diretamente (sem depender de abas)
+                jsonData = parseCSV(e.target.result);
+            } else {
+                // XLSX: tenta encontrar aba com T4 no nome, senão usa a primeira
+                const data = new Uint8Array(e.target.result);
+                const workbook = XLSX.read(data, { type: 'array' });
+                const targetSheetName = workbook.SheetNames.find(name => name.toUpperCase().includes('T4'))
+                    || workbook.SheetNames[0];
+                const worksheet = workbook.Sheets[targetSheetName];
+                jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 'A' });
+            }
+
+            if (!jsonData || jsonData.length < 2) {
+                alert('Erro: Arquivo vazio ou com formato incorreto.');
                 return;
             }
-            
-            const worksheet = workbook.Sheets[targetSheetName];
-            const jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 'A' });
-            
-            if (jsonData.length < 2) {
-                alert('Erro: Planilha vazia ou com formato incorreto.');
-                return;
-            }
-            
-            // Parsear os produtos da planilha mestra
-            // Formato esperado de cabeçalho: Row 2 tem SKU, NOME DO PRODUTO, PREÇO CUSTO, QUANTIDADE
-            // Nós identificamos as colunas analisando a Row 2 (índice 1)
-            let colSku = 'A', colName = 'B', colCost = 'C', colQty = 'D';
-            
-            const headerRow = jsonData.find(row => 
-                (row.A && row.A.toString().toUpperCase().includes('SKU')) || 
-                (row.B && row.B.toString().toUpperCase().includes('PRODUTO'))
+
+            // ── Detecção automática de colunas pelo cabeçalho ──────────────────
+            // Formatos suportados:
+            //   XLSX clássico: SKU | PRODUTO | CUSTO | QUANTIDADE
+            //   CSV Goianita:  Produto | Código (SKU) | Unidade | goianita85 | goianitat4 | Castor | Total
+            let colSku = null, colName = null, colCost = null, colQty = null;
+
+            // Encontra a linha de cabeçalho (primeira linha com texto reconhecível)
+            const headerRow = jsonData.find(row =>
+                Object.values(row).some(v => {
+                    const t = v ? v.toString().toUpperCase() : '';
+                    return t.includes('SKU') || t.includes('CÓDIGO') || t.includes('CODIGO') || t.includes('PRODUTO');
+                })
             );
-            
+
             if (headerRow) {
-                // Mapeia letras se o formato for fora do padrão
                 for (const [key, value] of Object.entries(headerRow)) {
-                    const text = value.toString().toUpperCase();
-                    if (text.includes('SKU')) colSku = key;
-                    else if (text.includes('PRODUTO') || text.includes('NOME')) colName = key;
-                    else if (text.includes('CUSTO') || text.includes('PRECO')) colCost = key;
-                    else if (text.includes('QUANTIDADE') || text.includes('QTD')) colQty = key;
+                    if (!value) continue;
+                    const text = value.toString().toUpperCase().trim();
+
+                    // SKU — "Código (SKU)", "SKU", "CÓDIGO", "CODIGO"
+                    if (text.includes('SKU') || text.includes('CÓDIGO') || text.includes('CODIGO')) {
+                        colSku = colSku || key;
+                    }
+                    // Nome do produto — "Produto", "NOME"
+                    else if (text.includes('PRODUTO') || text.includes('NOME')) {
+                        colName = colName || key;
+                    }
+                    // Quantidade T4 — "goianitat4", "T4", "QTD T4", "QUANTIDADE"
+                    else if (text.includes('GOIANITAT4') || text === 'T4' || text.includes('QTD T4') || (text.includes('QUANTIDADE') && !colQty)) {
+                        colQty = colQty || key;
+                    }
+                    // Custo / Total — "Total", "Custo", "Preço"
+                    else if (text.includes('TOTAL') || text.includes('CUSTO') || text.includes('PRECO') || text.includes('PREÇO')) {
+                        colCost = colCost || key;
+                    }
                 }
             }
-            
+
+            // Fallback: se não detectou pelo cabeçalho, usa posições padrão (A, B, C, D)
+            if (!colSku)  colSku  = 'B'; // Código (SKU) normalmente é a 2ª coluna no CSV Goianita
+            if (!colName) colName = 'A'; // Produto é a 1ª
+            if (!colQty)  colQty  = 'E'; // goianitat4 é a 5ª coluna
+            if (!colCost) colCost = 'G'; // Total é a 7ª coluna
+
+            console.log('📋 Colunas detectadas para Planilha Mestra:', { colSku, colName, colQty, colCost });
+
+            // ── Processar linhas de dados ────────────────────────────────────────
             const products = [];
-            jsonData.forEach(row => {
-                const skuStr = row[colSku] ? row[colSku].toString().trim() : '';
-                // Ignorar cabeçalhos e linhas vazias
-                if (!skuStr || skuStr.toUpperCase().includes('SKU') || skuStr.toUpperCase().includes('ESTOQUE')) {
-                    return;
-                }
-                
-                const costVal = parseFloat(row[colCost]) || 0;
-                const qtyVal = parseInt(row[colQty]) || 0;
-                
+            jsonData.forEach((row, idx) => {
+                const skuRaw = row[colSku] ? row[colSku].toString().trim() : '';
+                const nameRaw = row[colName] ? row[colName].toString().trim() : '';
+
+                // Ignorar linhas vazias e cabeçalhos
+                if (!skuRaw) return;
+                const upper = skuRaw.toUpperCase();
+                if (upper.includes('SKU') || upper.includes('CÓDIGO') || upper.includes('CODIGO') ||
+                    upper.includes('PRODUTO') || upper.includes('ESTOQUE')) return;
+
+                // Limpar valor numérico (suporta vírgula decimal)
+                const parseNum = (v) => {
+                    if (!v) return 0;
+                    return parseFloat(v.toString().replace(/\./g, '').replace(',', '.')) || 0;
+                };
+
+                const costVal = parseNum(row[colCost]);
+                const qtyVal  = Math.floor(parseNum(row[colQty]));
+
+                if (qtyVal <= 0) return; // Ignora itens sem estoque T4
+
                 products.push({
-                    sku: skuStr,
-                    name: row[colName] ? row[colName].toString().trim() : 'PRODUTO SEM NOME',
+                    sku:  skuRaw,
+                    name: nameRaw || 'PRODUTO SEM NOME',
                     cost: costVal,
-                    qty: qtyVal
+                    qty:  qtyVal
                 });
             });
-            
+
             if (products.length === 0) {
-                alert('Nenhum SKU válido de comodato foi localizado na planilha!');
+                alert('Nenhum SKU com estoque T4 válido foi encontrado! Verifique se a coluna "goianitat4" (ou T4) existe e tem valores maiores que zero.');
                 return;
             }
-            
+
             saveMasterToDB(products).then(() => {
-                alert(`Sucesso! Carregada base de comodato da FILIAL T4 contendo ${products.length} SKUs.`);
+                alert(`✅ Sucesso! Base de comodato carregada com ${products.length} SKUs ativos na FILIAL T4.`);
             });
-            
+
         } catch (err) {
             console.error(err);
-            alert('Falha ao parsear arquivo de planilha mestra: ' + err.message);
+            alert('Falha ao ler a planilha mestra: ' + err.message);
         }
     };
-    reader.readAsArrayBuffer(file);
+
+    // CSV lê como texto; XLSX lê como binário
+    if (isCSV) {
+        reader.readAsText(file, 'utf-8');
+    } else {
+        reader.readAsArrayBuffer(file);
+    }
 }
 
 // Configurar eventos do dropzone do Relatório de Vendas (Castor 85)
