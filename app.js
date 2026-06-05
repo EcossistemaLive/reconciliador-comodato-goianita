@@ -270,12 +270,16 @@ function handleMasterFile(file) {
             }
 
             // ── Detecção automática de colunas pelo cabeçalho ──────────────────
-            // Formatos suportados:
-            //   XLSX clássico: SKU | PRODUTO | CUSTO | QUANTIDADE
-            //   CSV Goianita:  Produto | Código (SKU) | Unidade | goianita85 | goianitat4 | Castor | Total
-            let colSku = null, colName = null, colCost = null, colQty = null;
+            // Estrutura do CSV Goianita:
+            //   A: Produto | B: Código (SKU) | C: Unidade | D: goianita85 | E: goianitat4 | F: Castor | G: Total
+            //
+            // REGRA DE NEGÓCIO:
+            //   - Coluna G (Total) = quantidade total no contrato de comodato Castor
+            //   - Se Total > 0, o SKU pertence ao comodato e deve ser reconciliado
+            //   - Colunas D, E, F são estoques parciais (ignorados para reconciliação)
+            let colSku = null, colName = null, colQty = null;
 
-            // Encontra a linha de cabeçalho (primeira linha com texto reconhecível)
+            // Encontra a linha de cabeçalho
             const headerRow = jsonData.find(row =>
                 Object.values(row).some(v => {
                     const t = v ? v.toString().toUpperCase() : '';
@@ -288,32 +292,32 @@ function handleMasterFile(file) {
                     if (!value) continue;
                     const text = value.toString().toUpperCase().trim();
 
-                    // SKU — "Código (SKU)", "SKU", "CÓDIGO", "CODIGO"
+                    // SKU — "Código (SKU)", "Código", "SKU"
                     if (text.includes('SKU') || text.includes('CÓDIGO') || text.includes('CODIGO')) {
                         colSku = colSku || key;
                     }
-                    // Nome do produto — "Produto", "NOME"
+                    // Nome — "Produto", "Nome"
                     else if (text.includes('PRODUTO') || text.includes('NOME')) {
                         colName = colName || key;
                     }
-                    // Quantidade T4 — "goianitat4", "T4", "QTD T4", "QUANTIDADE"
-                    else if (text.includes('GOIANITAT4') || text === 'T4' || text.includes('QTD T4') || (text.includes('QUANTIDADE') && !colQty)) {
+                    // ✅ Quantidade do comodato = coluna "Total" (G)
+                    // "Total" representa o saldo total disponível para o contrato Castor
+                    else if (text === 'TOTAL' || text.includes('TOTAL COMODATO')) {
                         colQty = colQty || key;
                     }
-                    // Custo / Total — "Total", "Custo", "Preço"
-                    else if (text.includes('TOTAL') || text.includes('CUSTO') || text.includes('PRECO') || text.includes('PREÇO')) {
-                        colCost = colCost || key;
+                    // Fallback genérico de quantidade (apenas se "Total" não foi encontrado)
+                    else if ((text.includes('QUANTIDADE') || text.includes('QTD')) && !colQty) {
+                        colQty = key;
                     }
                 }
             }
 
-            // Fallback: se não detectou pelo cabeçalho, usa posições padrão (A, B, C, D)
-            if (!colSku)  colSku  = 'B'; // Código (SKU) normalmente é a 2ª coluna no CSV Goianita
-            if (!colName) colName = 'A'; // Produto é a 1ª
-            if (!colQty)  colQty  = 'E'; // goianitat4 é a 5ª coluna
-            if (!colCost) colCost = 'G'; // Total é a 7ª coluna
+            // Fallback por posição (estrutura padrão do CSV Goianita)
+            if (!colSku)  colSku  = 'B'; // Código (SKU) = coluna B
+            if (!colName) colName = 'A'; // Produto       = coluna A
+            if (!colQty)  colQty  = 'G'; // Total         = coluna G ← comodato Castor
 
-            console.log('📋 Colunas detectadas para Planilha Mestra:', { colSku, colName, colQty, colCost });
+            console.log('📋 Colunas detectadas para Planilha Mestra:', { colSku, colName, colQty });
 
             // ── Processar linhas de dados ────────────────────────────────────────
             const products = [];
@@ -333,21 +337,22 @@ function handleMasterFile(file) {
                     return parseFloat(v.toString().replace(/\./g, '').replace(',', '.')) || 0;
                 };
 
-                const costVal = parseNum(row[colCost]);
-                const qtyVal  = Math.floor(parseNum(row[colQty]));
+                // colQty = coluna G (Total) = quantidade total no comodato Castor
+                const qtyVal = Math.floor(parseNum(row[colQty]));
 
-                if (qtyVal <= 0) return; // Ignora itens sem estoque T4
+                // Se Total = 0, o SKU não faz parte do contrato de comodato → ignorar
+                if (qtyVal <= 0) return;
 
                 products.push({
                     sku:  skuRaw,
                     name: nameRaw || 'PRODUTO SEM NOME',
-                    cost: costVal,
+                    cost: 0,   // custo não disponível neste formato de planilha
                     qty:  qtyVal
                 });
             });
 
             if (products.length === 0) {
-                alert('Nenhum SKU com estoque T4 válido foi encontrado! Verifique se a coluna "goianitat4" (ou T4) existe e tem valores maiores que zero.');
+                alert('Nenhum SKU de comodato encontrado!\n\nVerifique se a coluna G (Total) da planilha possui valores maiores que zero.\nApenas itens com Total > 0 são considerados parte do contrato Castor.');
                 return;
             }
 
