@@ -344,7 +344,7 @@ function handleMasterFile(file) {
                 if (qtyVal <= 0) return;
 
                 products.push({
-                    sku:  skuRaw,
+                    sku:  normalizeSku(skuRaw), // ← normalizado = chave consistente com o stockMap
                     name: nameRaw || 'PRODUTO SEM NOME',
                     cost: 0,   // custo não disponível neste formato de planilha
                     qty:  qtyVal
@@ -468,6 +468,17 @@ function parseCSV(text) {
     return rows;
 }
 
+// ── Normalização de SKU ─────────────────────────────────────────────────────
+// Garante que "10111953", "10111953.0", " 10111953 " e "10111953" sejam iguais
+function normalizeSku(raw) {
+    if (!raw) return '';
+    let s = raw.toString().trim();
+    // Remove sufixo decimal desnecessário: "12345.0" → "12345"
+    s = s.replace(/\.0+$/, '');
+    // Remove espaços internos e converte para maiúsculas
+    return s.toUpperCase();
+}
+
 // Algoritmo Principal de Matching e Reconciliação
 function reconcileSales(salesRows) {
     if (comodatoActiveStock.length === 0) {
@@ -480,11 +491,14 @@ function reconcileSales(salesRows) {
     divergentResults = [];
     
     // Clonar o estoque ativo para manipulação em memória durante a conciliação
-    // Isso evita degradar o IndexedDB com atualizações parciais
+    // Chave do mapa = SKU normalizado para evitar falhas por formato diferente
     const stockMap = {};
     comodatoActiveStock.forEach(p => {
-        stockMap[p.sku] = { ...p };
+        stockMap[normalizeSku(p.sku)] = { ...p };
     });
+
+    console.log(`📦 StockMap carregado com ${Object.keys(stockMap).length} SKUs.`);
+    console.log('🔑 Primeiros 5 SKUs no comodato:', Object.keys(stockMap).slice(0, 5));
     
     // Detectar colunas do relatório de vendas do Helper da Filial 85
     let colSku = 'A', colQty = 'D', colPrice = 'C'; 
@@ -504,14 +518,25 @@ function reconcileSales(salesRows) {
     
     let totalMatchedQty = 0;
     let totalMatchedValue = 0;
+
+    // Log diagnóstico: mostra as primeiras linhas do arquivo de vendas
+    const sampleSalesSkus = salesRows
+        .map(r => r[colSku] ? normalizeSku(r[colSku]) : '')
+        .filter(s => s && !s.includes('SKU') && !s.includes('CÓDIGO'))
+        .slice(0, 5);
+    console.log('🛒 Primeiros 5 SKUs no arquivo de vendas:', sampleSalesSkus);
+    console.log('🗂️ Colunas detectadas no arquivo de vendas:', { colSku, colQty, colPrice });
     
     salesRows.forEach(row => {
-        const skuStr = row[colSku] ? row[colSku].toString().trim() : '';
-        if (!skuStr || skuStr.toUpperCase().includes('SKU') || skuStr.toUpperCase().includes('CÓDIGO') || skuStr.toUpperCase().includes('ESTOQUE')) {
+        const skuRaw  = row[colSku] ? row[colSku].toString().trim() : '';
+        const skuStr  = normalizeSku(skuRaw); // ← normalizado para comparação
+        const skuOrig = skuRaw;               // ← original para exibição
+
+        if (!skuStr || skuStr.includes('SKU') || skuStr.includes('CÓDIGO') || skuStr.includes('ESTOQUE')) {
             return; // ignora cabeçalho
         }
         
-        const qtySold = parseInt(row[colQty]) || 0;
+        const qtySold  = parseInt(row[colQty])   || 0;
         const pdvPrice = parseFloat(row[colPrice]) || 0;
         
         if (qtySold <= 0) return;
@@ -519,13 +544,18 @@ function reconcileSales(salesRows) {
         const match = stockMap[skuStr];
         
         if (!match) {
-            // Divergência: SKU vendido na Filial 85 mas que não pertence ao comodato de T4
+            // Divergência: SKU vendido na Filial 85 mas que não pertence ao comodato
+            console.warn(`❌ SKU não encontrado no comodato: "${skuOrig}" (normalizado: "${skuStr}")`);
+            // Tenta achar o nome do produto em outras colunas da linha de vendas
+            const prodName = (colSku !== 'B' && row['B']) ? row['B']
+                           : (colSku !== 'A' && row['A']) ? row['A']
+                           : 'PRODUTO NÃO CADASTRADO NO COMODATO';
             divergentResults.push({
-                sku: skuStr,
-                name: row['B'] || 'PRODUTO NÃO CADASTRADO NO COMODATO',
+                sku: skuOrig,
+                name: prodName,
                 qtySold: qtySold,
                 comodatoQty: 0,
-                reason: 'SKU não pertence ao contrato de comodato (T4)'
+                reason: 'SKU não encontrado no contrato de comodato — verifique se está na planilha mestra com Total > 0'
             });
             return;
         }
