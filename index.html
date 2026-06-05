@@ -13,6 +13,8 @@
     <!-- Tailwind CSS (Se o usuário desejar usar no futuro, mas mantemos o style.css puro como verdade para o design Vanilla) -->
     <!-- SheetJS (xlsx) for parsing Excel files client-side -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js" integrity="sha512-r22gChDnGvBylk90+2e/yCr3MTsSlZsHzID3TNc3q28WghHsjt/1/IBm5nHLibrt5bdb2OIZF9KyqYhzVyYuWA==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+    <!-- Chart.js for data visualization -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     
     <link rel="stylesheet" href="style.css">
 </head>
@@ -26,17 +28,18 @@
         <!-- Header -->
         <header class="app-header">
             <div class="logo-area">
-                <span class="logo-icon">⚡</span>
+                <img src="logo.png" alt="Goianita Logo" class="logo-image" id="logo-img" style="display: none;" onload="this.style.display='inline-block'; document.getElementById('logo-fallback-icon').style.display='none';">
+                <span class="logo-icon" id="logo-fallback-icon">⚡</span>
                 <div class="logo-text">
                     <h1>Goianita</h1>
                     <span class="sub-logo">Reconciliador Fiscal de Comodato</span>
                 </div>
             </div>
             <div class="status-badge-container">
-                <div class="status-badge offline-mode">
+                <a href="https://ecossistemalive.github.io/reconciliador-comodato-goianita/" target="_blank" class="status-badge online-mode" style="text-decoration: none;">
                     <span class="badge-dot"></span>
-                    <span class="badge-text">Modo Local & Seguro</span>
-                </div>
+                    <span class="badge-text">Acesso Online Ativo</span>
+                </a>
             </div>
         </header>
 
@@ -197,18 +200,28 @@
         <section class="results-section" id="results-section" style="display: none;">
             <div class="results-header">
                 <h2>📊 Resultados da Reconciliação</h2>
+            </div>
+            
+            <div class="results-layout-grid">
                 <div class="stats-grid">
                     <div class="stat-card">
                         <span class="stat-label">Itens Reconciliados</span>
                         <span class="stat-value" id="stat-qty-matched">0</span>
                     </div>
                     <div class="stat-card">
-                        <span class="stat-label">Total Faturado (Virtual $\rightarrow$ Castor)</span>
+                        <span class="stat-label">Total Faturado (Virtual → Castor)</span>
                         <span class="stat-value accent" id="stat-value-matched">R$ 0,00</span>
                     </div>
                     <div class="stat-card divergent">
                         <span class="stat-label">Divergências Detectadas</span>
                         <span class="stat-value error" id="stat-qty-divergent">0</span>
+                    </div>
+                </div>
+                
+                <div class="chart-container-card">
+                    <h3>Proporção Reconciliada vs. Divergências</h3>
+                    <div class="chart-wrapper">
+                        <canvas id="reconciliation-chart"></canvas>
                     </div>
                 </div>
             </div>

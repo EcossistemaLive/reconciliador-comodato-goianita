@@ -9,6 +9,7 @@ let db;
 let comodatoActiveStock = []; // Armazenamento temporário em memória para reconciliação ativa
 let matchedResults = [];
 let divergentResults = [];
+let reconciliationChart = null;
 
 // Inicialização da IndexedDB
 function initDB() {
@@ -615,12 +616,22 @@ function reconcileSales(salesRows) {
         }
     });
     
+    // Calcular total de itens divergentes
+    let totalDivergentQty = 0;
+    divergentResults.forEach(d => {
+        if (d.comodatoQty > 0) {
+            totalDivergentQty += (d.qtySold - d.comodatoQty);
+        } else {
+            totalDivergentQty += d.qtySold;
+        }
+    });
+    
     // Atualizar UI com os resultados calculados
-    displayResults(totalMatchedQty, totalMatchedValue, divergentResults);
+    displayResults(totalMatchedQty, totalMatchedValue, divergentResults, totalDivergentQty);
 }
 
 // 5. Exibição e Exportação de Resultados (Fase 3 do Backlog)
-function displayResults(matchedQty, matchedValue, divergences) {
+function displayResults(matchedQty, matchedValue, divergences, divergentQty = 0) {
     resultsSection.style.display = 'block';
     statQtyMatched.textContent = matchedQty.toLocaleString('pt-BR');
     statValueMatched.textContent = formatCurrency(matchedValue);
@@ -646,8 +657,73 @@ function displayResults(matchedQty, matchedValue, divergences) {
         divergencesPanel.style.display = 'none';
     }
     
+    // Renderizar gráfico
+    renderReconciliationChart(matchedQty, divergentQty);
+    
     // Suave Scroll para resultados
     resultsSection.scrollIntoView({ behavior: 'smooth' });
+}
+
+// Renderização do gráfico de reconciliação
+function renderReconciliationChart(matchedQty, divergentQty) {
+    const canvas = document.getElementById('reconciliation-chart');
+    if (!canvas) return;
+    
+    const ctx = canvas.getContext('2d');
+    
+    if (reconciliationChart) {
+        reconciliationChart.destroy();
+    }
+    
+    // Se ambos forem zero (caso de erro ou arquivo vazio)
+    if (matchedQty === 0 && divergentQty === 0) {
+        return;
+    }
+    
+    reconciliationChart = new Chart(ctx, {
+        type: 'doughnut',
+        data: {
+            labels: ['Reconciliados', 'Divergências'],
+            datasets: [{
+                data: [matchedQty, divergentQty],
+                backgroundColor: [
+                    '#2DB87E', // verde sucesso
+                    '#E63A3A'  // vermelho erro
+                ],
+                borderWidth: 2,
+                borderColor: '#1a1a2e',
+                hoverOffset: 4
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            cutout: '70%',
+            plugins: {
+                legend: {
+                    position: 'bottom',
+                    labels: {
+                        color: '#b3b3b3',
+                        padding: 15,
+                        font: {
+                            family: "'Inter', sans-serif",
+                            size: 11
+                        }
+                    }
+                },
+                tooltip: {
+                    callbacks: {
+                        label: function(context) {
+                            const value = context.raw;
+                            const total = context.dataset.data.reduce((a, b) => a + b, 0);
+                            const percentage = total > 0 ? ((value / total) * 100).toFixed(1) : 0;
+                            return ` ${context.label}: ${value} unidades (${percentage}%)`;
+                        }
+                    }
+                }
+            }
+        }
+    });
 }
 
 // Carregar configurações do Google Sheets do localStorage
