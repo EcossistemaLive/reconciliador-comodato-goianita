@@ -342,10 +342,14 @@ function handleMasterFile(file) {
                 if (upper.includes('SKU') || upper.includes('CÓDIGO') || upper.includes('CODIGO') ||
                     upper.includes('PRODUTO') || upper.includes('ESTOQUE')) return;
 
-                // Limpar valor numérico (suporta vírgula decimal)
+                // Limpar valor numérico (suporta moeda com R$ e vírgula decimal)
                 const parseNum = (v) => {
                     if (!v) return 0;
-                    return parseFloat(v.toString().replace(/\./g, '').replace(',', '.')) || 0;
+                    // Remove R$, espaços e qualquer caractere que não seja número, vírgula ou ponto
+                    let cleanStr = v.toString().replace(/[^\d,\.-]/g, '');
+                    // Trata os pontos de milhar e a vírgula decimal
+                    cleanStr = cleanStr.replace(/\./g, '').replace(',', '.');
+                    return parseFloat(cleanStr) || 0;
                 };
 
                 // colQty = coluna G (Total) = quantidade total na consignação Castor
