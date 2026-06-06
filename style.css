@@ -32,8 +32,8 @@
 }
 
 body {
-    background-color: var(--goianita-areia);
-    color: var(--goianita-verde);
+    background-color: var(--goianita-verde);
+    color: var(--goianita-branco);
     font-family: var(--font-body);
     min-height: 100vh;
     padding: 2rem;
