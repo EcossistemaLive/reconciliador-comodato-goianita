@@ -185,6 +185,7 @@ body {
     flex-direction: column;
     gap: 2rem;
     position: relative;
+    color: var(--goianita-verde);
 }
 
 .panel-header h2 {

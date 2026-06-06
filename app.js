@@ -811,7 +811,7 @@ function syncToGoogleSheets(testMode = false) {
     
     if (testMode) {
         sheetsTestStatus.style.display = 'block';
-        sheetsTestStatus.style.color = 'var(--text-secondary)';
+        sheetsTestStatus.style.color = 'var(--goianita-verde)';
         sheetsTestStatus.textContent = 'Conectando ao Google Sheets...';
     }
     
@@ -827,7 +827,7 @@ function syncToGoogleSheets(testMode = false) {
     .then(response => {
         if (testMode) {
             sheetsTestStatus.style.display = 'block';
-            sheetsTestStatus.style.color = 'var(--status-offline)';
+            sheetsTestStatus.style.color = 'var(--goianita-dourado)';
             sheetsTestStatus.textContent = 'Requisição de teste enviada! Verifique se uma nova linha apareceu na planilha.';
             setTimeout(() => { sheetsTestStatus.style.display = 'none'; }, 8000);
         } else {
@@ -838,7 +838,7 @@ function syncToGoogleSheets(testMode = false) {
         console.error('Erro no Google Sheets:', error);
         if (testMode) {
             sheetsTestStatus.style.display = 'block';
-            sheetsTestStatus.style.color = 'var(--status-error)';
+            sheetsTestStatus.style.color = 'var(--goianita-terra)';
             sheetsTestStatus.textContent = 'Falha ao enviar: ' + error.message;
         } else {
             alert('Erro ao registrar dados no Google Sheets: ' + error.message);
