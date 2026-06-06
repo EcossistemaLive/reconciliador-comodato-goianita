@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Goianita - Reconciliador Fiscal e Estoque</title>
+    <title>Goianita - Reconciliador de Consignação</title>
     
     <!-- Google Fonts: Outfit & Inter -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -19,20 +19,16 @@
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
-    <div class="background-decor">
-        <div class="glow-orb orb-1"></div>
-        <div class="glow-orb orb-2"></div>
-    </div>
+    <!-- Background decor removed for new brand identity -->
 
     <main class="app-container">
         <!-- Header -->
-        <header class="app-header">
+        <header class="app-header goianita-frame">
             <div class="logo-area">
-                <img src="logo.png" alt="Goianita Logo" class="logo-image" id="logo-img" style="display: none;" onload="this.style.display='inline-block'; document.getElementById('logo-fallback-icon').style.display='none';">
-                <span class="logo-icon" id="logo-fallback-icon">⚡</span>
+                <img src="Prancheta 3.png" alt="Goianita Logo" class="logo-image" id="logo-img">
                 <div class="logo-text">
                     <h1>Goianita</h1>
-                    <span class="sub-logo">Reconciliador Fiscal de Comodato</span>
+                    <span class="sub-logo">Reconciliador Fiscal de Consignação</span>
                 </div>
             </div>
             <div class="status-badge-container">
@@ -49,13 +45,13 @@
             <!-- Left Panel: Configuration & Database -->
             <section class="panel left-panel">
                 <div class="panel-header">
-                    <h2>1. Planilha Mestra (Virtual - T4)</h2>
-                    <p class="panel-desc">Inicialize o estoque original da Virtual para reconciliação</p>
+                    <h2>1. Planilha Mestra (Virtual)</h2>
+                    <p class="panel-desc">Inicialize o estoque original da Virtual para a consignação</p>
                 </div>
                 
                 <div class="db-card" id="db-status-card">
                     <div class="db-status-header">
-                        <span class="status-icon" id="db-status-icon">⚠️</span>
+                        <span class="status-icon" id="db-status-icon" style="display:none;"></span>
                         <div class="db-status-info">
                             <h3 id="db-status-title">Aguardando Base contábil</h3>
                             <p id="db-status-text">IndexedDB local vazia</p>
@@ -81,15 +77,14 @@
                 <div class="dropzone master-dropzone" id="master-dropzone">
                     <input type="file" id="master-file-input" accept=".xlsx, .xls, .csv" style="display: none;">
                     <div class="dropzone-content">
-                        <span class="drop-icon">📂</span>
-                        <p class="drop-text">Arraste a planilha <strong>T4 Virtual</strong> (CSV ou XLSX) ou clique para navegar</p>
-                        <span class="file-limits">Colunas: Produto · Código (SKU) · goianitat4 · Total</span>
+                        <p class="drop-text">Arraste a planilha <strong>Virtual</strong> (Base Contábil, CSV ou XLSX) ou clique para navegar</p>
+                        <span class="file-limits">Colunas: Produto · Código (SKU) · Preço Custo · Preço Venda · Total</span>
                     </div>
                 </div>
                 
                 <!-- Reset DB Button -->
                 <button class="btn btn-secondary" id="btn-reset-db" style="display: none;">
-                    <span>🗑️ Limpar Base Local</span>
+                    <span>Limpar Base Local</span>
                 </button>
 
                 <div class="panel-section-divider"></div>
@@ -114,7 +109,7 @@
                     </div>
                     
                     <button class="btn btn-secondary" id="btn-test-sheets" style="margin-top: 0.5rem;">
-                        <span>🔌 Testar Conexão Google Sheets</span>
+                        <span>Testar Conexão Google Sheets</span>
                     </button>
                     <div id="sheets-test-status" style="font-size: 0.8rem; text-align: center; display: none;"></div>
                 </div>
@@ -132,7 +127,6 @@
                     <label class="pricing-option" for="pricing-custo">
                         <input type="radio" name="pricing-mode" id="pricing-custo" value="custo" checked>
                         <div class="option-content">
-                            <span class="opt-icon">🏷️</span>
                             <div class="opt-text">
                                 <h3>Custo Contábil Fixo</h3>
                                 <p>Fatura pelo custo da planilha T4 (Virtual)</p>
@@ -143,7 +137,6 @@
                     <label class="pricing-option" for="pricing-pdv">
                         <input type="radio" name="pricing-mode" id="pricing-pdv" value="pdv">
                         <div class="option-content">
-                            <span class="opt-icon">🛒</span>
                             <div class="opt-text">
                                 <h3>Preço Real PDV (Castor)</h3>
                                 <p>Preserva descontos, atacados e promoções de venda</p>
@@ -154,7 +147,6 @@
                     <label class="pricing-option" for="pricing-fator">
                         <input type="radio" name="pricing-mode" id="pricing-fator" value="fator">
                         <div class="option-content">
-                            <span class="opt-icon">⚖️</span>
                             <div class="opt-text">
                                 <h3>Fator de Ajuste Dinâmico</h3>
                                 <p>Markup ou desconto aplicado em lote</p>
@@ -181,15 +173,14 @@
                 <div class="panel-section-divider"></div>
                 
                 <div class="panel-header">
-                    <h2>3. Reconciliação Diária (Castor - Filial 85)</h2>
+                    <h2>3. Reconciliação Diária (Castor)</h2>
                     <p class="panel-desc">Arraste o arquivo de vendas diárias da Castor para reconciliar</p>
                 </div>
 
                 <div class="dropzone sales-dropzone disabled" id="sales-dropzone">
                     <input type="file" id="sales-file-input" accept=".csv, .xlsx, .xls" style="display: none;" disabled>
                     <div class="dropzone-content">
-                        <span class="drop-icon">⚡</span>
-                        <p class="drop-text" id="sales-drop-text">Carregue primeiro a planilha mestra (T4)</p>
+                        <p class="drop-text" id="sales-drop-text">Carregue primeiro a planilha mestra (Virtual)</p>
                         <span class="file-limits">Suporta CSV e XLSX exportado pelo Helper</span>
                     </div>
                 </div>
@@ -199,7 +190,7 @@
         <!-- Processing Stats & Results -->
         <section class="results-section" id="results-section" style="display: none;">
             <div class="results-header">
-                <h2>📊 Resultados da Reconciliação</h2>
+                <h2>Resultados da Reconciliação</h2>
             </div>
             
             <div class="results-layout-grid">
@@ -229,16 +220,16 @@
             <!-- Export Buttons -->
             <div class="action-bar" style="display: flex; gap: 1rem; justify-content: flex-end;">
                 <button class="btn btn-secondary" id="btn-sync-sheets" style="width: auto; min-width: 200px;">
-                    <span>💾 Registrar no Google Sheets</span>
+                    <span>Registrar no Google Sheets</span>
                 </button>
                 <button class="btn btn-primary" id="btn-export-olist" style="width: auto; min-width: 250px;">
-                    <span>📤 Exportar CSV para Olist</span>
+                    <span>Exportar CSV para Olist</span>
                 </button>
             </div>
 
             <!-- Tabs/Divergences Panel -->
             <div class="divergences-panel" id="divergences-panel" style="display: none;">
-                <h3>⚠️ Relatório de Divergências / Inconsistências</h3>
+                <h3>Relatório de Divergências de Consignação</h3>
                 <div class="table-container">
                     <table class="data-table">
                         <thead>
@@ -246,7 +237,7 @@
                                 <th>SKU</th>
                                 <th>Produto</th>
                                 <th>Qtd. Vendida</th>
-                                <th>Qtd. em Comodato</th>
+                                <th>Qtd. em Consignação</th>
                                 <th>Motivo da Divergência</th>
                             </tr>
                         </thead>

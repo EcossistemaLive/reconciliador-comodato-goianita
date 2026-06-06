@@ -1,12 +1,12 @@
 // app.js - Motor de Reconciliação e UI Controller (Offline-First)
 
 // 1. Configuração do IndexedDB Local
-const DB_NAME = 'GoianitaComodatoDB';
+const DB_NAME = 'GoianitaConsignacaoDB';
 const DB_VERSION = 1;
-const STORE_NAME = 'comodato_master';
+const STORE_NAME = 'consignacao_master';
 
 let db;
-let comodatoActiveStock = []; // Armazenamento temporário em memória para reconciliação ativa
+let consignacaoActiveStock = []; // Armazenamento temporário em memória para reconciliação ativa
 let matchedResults = [];
 let divergentResults = [];
 let reconciliationChart = null;
@@ -45,7 +45,7 @@ function loadStoredMaster() {
         request.onsuccess = () => {
             const data = request.result;
             if (data && data.length > 0) {
-                comodatoActiveStock = data;
+                consignacaoActiveStock = data;
                 updateDBStatusUI(true, data);
                 enableSalesDropzone(true);
             } else {
@@ -71,7 +71,7 @@ function saveMasterToDB(products) {
         });
         
         transaction.oncomplete = () => {
-            comodatoActiveStock = products;
+            consignacaoActiveStock = products;
             updateDBStatusUI(true, products);
             enableSalesDropzone(true);
             resolve();
@@ -92,7 +92,7 @@ function clearDB() {
         store.clear();
         
         transaction.oncomplete = () => {
-            comodatoActiveStock = [];
+            consignacaoActiveStock = [];
             updateDBStatusUI(false);
             enableSalesDropzone(false);
             hideResults();
@@ -147,7 +147,8 @@ const btnSyncSheets = document.getElementById('btn-sync-sheets');
 function updateDBStatusUI(active, data = []) {
     if (active) {
         dbStatusCard.classList.add('active');
-        dbStatusIcon.textContent = '🟢';
+        dbStatusIcon.textContent = '';
+        dbStatusIcon.style.display = 'none';
         dbStatusTitle.textContent = 'Base Contábil Ativa';
         
         // Calcular totais
@@ -155,7 +156,7 @@ function updateDBStatusUI(active, data = []) {
         const totalQty = data.reduce((acc, curr) => acc + (curr.qty || 0), 0);
         const totalValue = data.reduce((acc, curr) => acc + ((curr.qty || 0) * (curr.cost || 0)), 0);
         
-        dbStatusText.textContent = 'Planilha T4 carregada localmente';
+        dbStatusText.textContent = 'Planilha Virtual carregada localmente';
         valSkus.textContent = totalSKUs.toLocaleString('pt-BR');
         valQty.textContent = totalQty.toLocaleString('pt-BR');
         valValue.textContent = formatCurrency(totalValue);
@@ -164,7 +165,8 @@ function updateDBStatusUI(active, data = []) {
         btnResetDb.style.display = 'block';
     } else {
         dbStatusCard.classList.remove('active');
-        dbStatusIcon.textContent = '⚠️';
+        dbStatusIcon.textContent = '';
+        dbStatusIcon.style.display = 'none';
         dbStatusTitle.textContent = 'Aguardando Base Contábil';
         dbStatusText.textContent = 'IndexedDB local vazia';
         
@@ -179,11 +181,11 @@ function enableSalesDropzone(enable) {
     if (enable) {
         salesDropzone.classList.remove('disabled');
         salesFileInput.disabled = false;
-        salesDropText.innerHTML = 'Arraste o arquivo de vendas <strong>Filial 85 Castor</strong> ou clique para navegar';
+        salesDropText.innerHTML = 'Arraste o arquivo de vendas da <strong>Castor</strong> ou clique para navegar';
     } else {
         salesDropzone.classList.add('disabled');
         salesFileInput.disabled = true;
-        salesDropText.innerHTML = 'Carregue primeiro a planilha mestra (T4)';
+        salesDropText.innerHTML = 'Carregue primeiro a planilha mestra (Virtual)';
     }
 }
 
@@ -217,7 +219,7 @@ slider.addEventListener('input', (e) => {
 
 // Resetar base local ao clicar
 btnResetDb.addEventListener('click', () => {
-    if (confirm('Tem certeza de que deseja apagar a base de comodato salva neste navegador?')) {
+    if (confirm('Tem certeza de que deseja apagar a base de consignação salva neste navegador?')) {
         clearDB();
     }
 });
@@ -256,10 +258,10 @@ function handleMasterFile(file) {
                 // Parsear CSV diretamente (sem depender de abas)
                 jsonData = parseCSV(e.target.result);
             } else {
-                // XLSX: tenta encontrar aba com T4 no nome, senão usa a primeira
+                // XLSX: tenta encontrar aba com Virtual no nome, senão usa a primeira
                 const data = new Uint8Array(e.target.result);
                 const workbook = XLSX.read(data, { type: 'array' });
-                const targetSheetName = workbook.SheetNames.find(name => name.toUpperCase().includes('T4'))
+                const targetSheetName = workbook.SheetNames.find(name => name.toUpperCase().includes('VIRTUAL') || name.toUpperCase().includes('T4'))
                     || workbook.SheetNames[0];
                 const worksheet = workbook.Sheets[targetSheetName];
                 jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 'A' });
@@ -272,13 +274,14 @@ function handleMasterFile(file) {
 
             // ── Detecção automática de colunas pelo cabeçalho ──────────────────
             // Estrutura do CSV Goianita:
-            //   A: Produto | B: Código (SKU) | C: Unidade | D: goianita85 | E: goianitat4 | F: Castor | G: Total
+            //   A: Produto | B: Código (SKU) | C: Preço Custo | D: Preço Venda | E: ... | G: Total
             //
             // REGRA DE NEGÓCIO:
-            //   - Coluna G (Total) = quantidade total no contrato de comodato Castor
-            //   - Se Total > 0, o SKU pertence ao comodato e deve ser reconciliado
+            //   - Coluna G (Total) = quantidade total no contrato de consignação Castor
+            //   - Se Total > 0, o SKU pertence à consignação e deve ser reconciliado
             //   - Colunas D, E, F são estoques parciais (ignorados para reconciliação)
             let colSku = null, colName = null, colQty = null;
+            let colCost = null, colPrice = null;
 
             // Encontra a linha de cabeçalho
             const headerRow = jsonData.find(row =>
@@ -301,14 +304,21 @@ function handleMasterFile(file) {
                     else if (text.includes('PRODUTO') || text.includes('NOME')) {
                         colName = colName || key;
                     }
-                    // ✅ Quantidade do comodato = coluna "Total" (G)
-                    // "Total" representa o saldo total disponível para o contrato Castor
-                    else if (text === 'TOTAL' || text.includes('TOTAL COMODATO')) {
+                    // Quantidade da consignação = coluna "Total" (G)
+                    else if (text === 'TOTAL' || text.includes('TOTAL COMODATO') || text.includes('TOTAL CONSIGNAÇÃO')) {
                         colQty = colQty || key;
                     }
                     // Fallback genérico de quantidade (apenas se "Total" não foi encontrado)
                     else if ((text.includes('QUANTIDADE') || text.includes('QTD')) && !colQty) {
                         colQty = key;
+                    }
+                    // Preço de Custo
+                    else if (text.includes('CUSTO')) {
+                        colCost = colCost || key;
+                    }
+                    // Preço de Venda
+                    else if (text.includes('VENDA') || text.includes('PDV')) {
+                        colPrice = colPrice || key;
                     }
                 }
             }
@@ -316,9 +326,9 @@ function handleMasterFile(file) {
             // Fallback por posição (estrutura padrão do CSV Goianita)
             if (!colSku)  colSku  = 'B'; // Código (SKU) = coluna B
             if (!colName) colName = 'A'; // Produto       = coluna A
-            if (!colQty)  colQty  = 'G'; // Total         = coluna G ← comodato Castor
+            if (!colQty)  colQty  = 'G'; // Total         = coluna G ← consignação Castor
 
-            console.log('📋 Colunas detectadas para Planilha Mestra:', { colSku, colName, colQty });
+            console.log('📋 Colunas detectadas para Planilha Mestra:', { colSku, colName, colQty, colCost, colPrice });
 
             // ── Processar linhas de dados ────────────────────────────────────────
             const products = [];
@@ -338,27 +348,28 @@ function handleMasterFile(file) {
                     return parseFloat(v.toString().replace(/\./g, '').replace(',', '.')) || 0;
                 };
 
-                // colQty = coluna G (Total) = quantidade total no comodato Castor
+                // colQty = coluna G (Total) = quantidade total na consignação Castor
                 const qtyVal = Math.floor(parseNum(row[colQty]));
 
-                // Se Total = 0, o SKU não faz parte do contrato de comodato → ignorar
+                // Se Total = 0, o SKU não faz parte do contrato de consignação → ignorar
                 if (qtyVal <= 0) return;
 
                 products.push({
                     sku:  normalizeSku(skuRaw), // ← normalizado = chave consistente com o stockMap
                     name: nameRaw || 'PRODUTO SEM NOME',
-                    cost: 0,   // custo não disponível neste formato de planilha
+                    cost: colCost ? parseNum(row[colCost]) : 0,
+                    price: colPrice ? parseNum(row[colPrice]) : 0,
                     qty:  qtyVal
                 });
             });
 
             if (products.length === 0) {
-                alert('Nenhum SKU de comodato encontrado!\n\nVerifique se a coluna G (Total) da planilha possui valores maiores que zero.\nApenas itens com Total > 0 são considerados parte do contrato Castor.');
+                alert('Nenhuma quantidade de consignação encontrada!\n\nVerifique se a coluna G (Total) da planilha possui valores maiores que zero.\nApenas itens com Total > 0 são considerados parte do contrato Castor.');
                 return;
             }
 
             saveMasterToDB(products).then(() => {
-                alert(`✅ Sucesso! Base de comodato carregada com ${products.length} SKUs ativos na FILIAL T4.`);
+                alert(`Sucesso! Base de consignação carregada com ${products.length} SKUs ativos na Virtual.`);
             });
 
         } catch (err) {
@@ -482,8 +493,8 @@ function normalizeSku(raw) {
 
 // Algoritmo Principal de Matching e Reconciliação
 function reconcileSales(salesRows) {
-    if (comodatoActiveStock.length === 0) {
-        alert('A base de comodato não está ativa!');
+    if (consignacaoActiveStock.length === 0) {
+        alert('A base de consignação não está ativa!');
         return;
     }
     
@@ -494,14 +505,14 @@ function reconcileSales(salesRows) {
     // Clonar o estoque ativo para manipulação em memória durante a conciliação
     // Chave do mapa = SKU normalizado para evitar falhas por formato diferente
     const stockMap = {};
-    comodatoActiveStock.forEach(p => {
+    consignacaoActiveStock.forEach(p => {
         stockMap[normalizeSku(p.sku)] = { ...p };
     });
 
     console.log(`📦 StockMap carregado com ${Object.keys(stockMap).length} SKUs.`);
-    console.log('🔑 Primeiros 5 SKUs no comodato:', Object.keys(stockMap).slice(0, 5));
+    console.log('Primeiros 5 SKUs na consignação:', Object.keys(stockMap).slice(0, 5));
     
-    // Detectar colunas do relatório de vendas do Helper da Filial 85
+    // Detectar colunas do relatório de vendas da Castor
     let colSku = 'A', colQty = 'D', colPrice = 'C'; 
     
     const headerRow = salesRows.find(row => 
@@ -545,18 +556,18 @@ function reconcileSales(salesRows) {
         const match = stockMap[skuStr];
         
         if (!match) {
-            // Divergência: SKU vendido na Filial 85 mas que não pertence ao comodato
-            console.warn(`❌ SKU não encontrado no comodato: "${skuOrig}" (normalizado: "${skuStr}")`);
+            // Divergência: SKU vendido na Castor mas que não pertence à consignação
+            console.warn(`SKU não encontrado na consignação: "${skuOrig}" (normalizado: "${skuStr}")`);
             // Tenta achar o nome do produto em outras colunas da linha de vendas
             const prodName = (colSku !== 'B' && row['B']) ? row['B']
                            : (colSku !== 'A' && row['A']) ? row['A']
-                           : 'PRODUTO NÃO CADASTRADO NO COMODATO';
+                           : 'PRODUTO NÃO CADASTRADO NA CONSIGNAÇÃO';
             divergentResults.push({
                 sku: skuOrig,
                 name: prodName,
                 qtySold: qtySold,
                 comodatoQty: 0,
-                reason: 'SKU não encontrado no contrato de comodato — verifique se está na planilha mestra com Total > 0'
+                reason: 'SKU não encontrado no contrato de consignação — verifique se está na planilha mestra com Total > 0'
             });
             return;
         }
@@ -611,7 +622,7 @@ function reconcileSales(salesRows) {
                 name: match.name,
                 qtySold: qtySold,
                 comodatoQty: partialQty,
-                reason: `Estoque esgotado. Faltam ${remainingQty} unidades no comodato.`
+                reason: `Estoque esgotado. Faltam ${remainingQty} unidades na consignação.`
             });
         }
     });
@@ -648,7 +659,7 @@ function displayResults(matchedQty, matchedValue, divergences, divergentQty = 0)
                 <td>${d.name}</td>
                 <td>${d.qtySold}</td>
                 <td>${d.comodatoQty}</td>
-                <td class="error-text">⚠️ ${d.reason}</td>
+                <td class="error-text">! ${d.reason}</td>
             `;
             divergencesTableBody.appendChild(row);
         });
@@ -797,7 +808,7 @@ function syncToGoogleSheets(testMode = false) {
     if (testMode) {
         sheetsTestStatus.style.display = 'block';
         sheetsTestStatus.style.color = 'var(--text-secondary)';
-        sheetsTestStatus.textContent = '⚡ Conectando ao Google Sheets...';
+        sheetsTestStatus.textContent = 'Conectando ao Google Sheets...';
     }
     
     // Fazer uma requisição POST usando a API Fetch para a URL do script do Google
@@ -813,7 +824,7 @@ function syncToGoogleSheets(testMode = false) {
         if (testMode) {
             sheetsTestStatus.style.display = 'block';
             sheetsTestStatus.style.color = 'var(--status-offline)';
-            sheetsTestStatus.textContent = '🔌 Requisição de teste enviada! Verifique se uma nova linha apareceu na planilha.';
+            sheetsTestStatus.textContent = 'Requisição de teste enviada! Verifique se uma nova linha apareceu na planilha.';
             setTimeout(() => { sheetsTestStatus.style.display = 'none'; }, 8000);
         } else {
             alert('Registro enviado com sucesso! Verifique a sua Planilha do Google.');
@@ -824,7 +835,7 @@ function syncToGoogleSheets(testMode = false) {
         if (testMode) {
             sheetsTestStatus.style.display = 'block';
             sheetsTestStatus.style.color = 'var(--status-error)';
-            sheetsTestStatus.textContent = '❌ Falha ao enviar: ' + error.message;
+            sheetsTestStatus.textContent = 'Falha ao enviar: ' + error.message;
         } else {
             alert('Erro ao registrar dados no Google Sheets: ' + error.message);
         }
@@ -873,7 +884,7 @@ btnExportOlist.addEventListener('click', () => {
     
     const today = new Date().toISOString().slice(0, 10);
     link.setAttribute('href', url);
-    link.setAttribute('download', `faturamento_comodato_virtual_para_castor_${today}.csv`);
+    link.setAttribute('download', `faturamento_consignacao_virtual_para_castor_${today}.csv`);
     link.style.visibility = 'hidden';
     
     document.body.appendChild(link);
